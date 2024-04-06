@@ -15,9 +15,21 @@ import time
 import sys
 import sqlite3
 #checksum(1B),l_data(4B),2B reserved,(data,nonce)
+'''
+features:
+aes-gcm encryption
+lzma compressions
+Elliptic-curve Diffie–Hellman
+preshared password used for key exchange (optional) 
+ability to chose eliptic curve algorithm 
+ability to set nonce and tag len for aes-gcm 
+barely readable code
 
-nonce_len=12
-tag_len=16
+limitations:
+max 4GiB for single data transfer
+'''
+
+
 supported_ecc=["p192","p224","p256","p384","p521","ed25519","ed448"]
 
 
@@ -48,7 +60,7 @@ class common:
         if session_key is not None:
             data = self.encrypt(session_key,data)
 
-        l_data=len(data)-nonce_len-tag_len 
+        l_data=len(data)-self.nonce_len-self.tag_len 
         if not l_data-4<=2**(8*4): raise Exception("don't send data over 4GiB")
         data = struct.pack('<I',l_data)+struct.pack('<B',0)*2+data
         checksum=SHAKE128.new(data).read(1)
@@ -68,11 +80,11 @@ class common:
         r2 = connection.recv(1)
         x=struct.unpack('<I',l_data)[0]  
         data = connection.recv(x)
-        nonce = connection.recv(nonce_len)
-        tag = connection.recv(tag_len)
+        nonce = connection.recv(self.nonce_len)
+        tag = connection.recv(self.tag_len)
         if SHAKE128.new(l_data+r1+r2+data+nonce+tag).read(1) != checksum:
             '''checks for in transport corruption, does not verify data, more for debeugging then anything else'''
-            raise Exception("data corrupted") 
+            raise Exception("data corrupted or incopatible settings") 
         
         if session_key is not None:
             data = self.decrypt(session_key,data,nonce=nonce,tag=tag)
@@ -180,20 +192,22 @@ class common:
 
     def encrypt(self,session_key,data):
         assert session_key is not None
-        cipher = AES.new(session_key, AES.MODE_GCM, mac_len=tag_len,nonce=get_random_bytes(nonce_len))
+        cipher = AES.new(session_key, AES.MODE_GCM, mac_len=self.tag_len,nonce=get_random_bytes(self.nonce_len))
         cipher.update(self.header)
         ct, tag = cipher.encrypt_and_digest(data)
         nonce = cipher.nonce 
         return ct+nonce+tag
     
     def decrypt(self,session_key,data, nonce=None,tag=None):
-        cipher = AES.new(session_key, AES.MODE_GCM,nonce=nonce, mac_len=tag_len)
+        cipher = AES.new(session_key, AES.MODE_GCM,nonce=nonce, mac_len=self.tag_len)
         cipher.update(self.header) #i have no idea it is
         return cipher.decrypt_and_verify(data,tag)
 
 class remote_client(common):
-    def __init__(self, connection, ip, key,key_type=None,password=None,headless=None):
+    def __init__(self, connection, ip, key,key_type=None,password=None,headless=None,nonce_len=None,tag_len=None):
         self.password = password
+        self.nonce_len=nonce_len
+        self.tag_len=tag_len
         super().__init__(key_type=key_type)
         self.headless=headless
         self.key=key
@@ -214,8 +228,10 @@ class remote_client(common):
 
 
 class server(common):
-    def __init__(self,address,key,key_type="p256",password=None,headless=True):
+    def __init__(self,address,key,key_type="p256",password=None,headless=True,nonce_len=12,tag_len=16):
         self.password = password
+        self.nonce_len=nonce_len
+        self.tag_len=tag_len
         super().__init__(key,key_type=key_type)
         self.headless=headless
         self.bind(address)
@@ -241,16 +257,17 @@ class server(common):
             thread.start()
             self.threads.append(thread)
     
-    def wait_for_client(self,clients):
+    def accept(self):
         while True:
-            for c in self.clients:
-                if c not in clients:
+            for c in self.new_clients:
+                if c not in self.clients:
+                    self.clients.append(c)
                     return c
             time.sleep(0.1)
 
     def handler(self,connection,client):
-        _client=remote_client(connection,client,self.key,key_type=self.key_type,password=self.password,headless=self.headless)
-        self.clients.append(_client)
+        _client=remote_client(connection,client,self.key,key_type=self.key_type,password=self.password,headless=self.headless,nonce_len=self.nonce_len,tag_len=self.tag_len)
+        self.new_clients.append(_client)
         return _client
 
     def close(self):
@@ -260,8 +277,10 @@ class server(common):
             
                 
 class client(common):
-    def __init__(self,address,key,db_name="known_keys.db",key_type="p256",password=None, headless=True,trust=False):
+    def __init__(self,address,key,db_name="known_keys.db",key_type="p256",password=None, headless=True,trust=False,nonce_len=12,tag_len=16):
         self.password = password
+        self.nonce_len=nonce_len
+        self.tag_len=tag_len
         super().__init__(key,key_type=key_type)
         self.trust=trust
         self.headless=headless
@@ -291,7 +310,7 @@ class client(common):
 
 if __name__ == "__main__":
     port=6021
-    s=server(f"127.0.0.1:{port}","server.key",password="test",headless=False)
-    c=client(f"127.0.0.1:{port}","client.key",password="test",headless=False) 
+    s=server(f"127.0.0.1:{port}","server.key",password="test",headless=False,nonce_len=8,tag_len=10)
+    c=client(f"127.0.0.1:{port}","client.key",password="test",headless=False,nonce_len=8,tag_len=10) 
     c.sendall("works")
-    print(s.clients[0].recvall())
+    print(s.accept().recvall())
