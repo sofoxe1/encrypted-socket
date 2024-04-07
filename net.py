@@ -286,13 +286,13 @@ class client(common):
         self.headless=headless
         common.loadkey(self)
         self.known_keys = db_name
-        self.connect(address,password)
+        self.connect(address)
         
-    def connect(self,address,password):
+    def connect(self,address):
         ip,port = address.split(":")
         self.connection = socket.create_connection((ip, int(port)))
         self.address = address
-        self.session_key = common.handshake(self,common.eph_priv(self),self.connection,client=(str(ip),port),password=password)
+        self.session_key = common.handshake(self,common.eph_priv(self),self.connection,client=(str(ip),port),password=self.password)
     
     def sendall(self,data):
         common.send(self,data)
