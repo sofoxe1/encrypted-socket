@@ -1,6 +1,3 @@
-import lzma
-import pickle
-import base64
 import socket
 import struct
 from Crypto.Cipher import AES
@@ -14,19 +11,28 @@ import threading
 import time
 import sys
 import sqlite3
-#checksum(1B),l_data(4B),2B reserved,(data,nonce)
+import compression
+#checksum(1B),l_data(4B),feature level (negotiated during handshake),1B reserved,(data,nonce,tag)
+
 '''
+creates encrypted connection between two devices
 features:
 aes-gcm encryption
-lzma compressions
+compressions
 Elliptic-curve Diffie–Hellman
 preshared password used for key exchange (optional) 
 ability to chose eliptic curve algorithm 
 ability to set nonce and tag len for aes-gcm 
-barely readable code
+no concern for coding conventions 
+random variable/function names
 
 limitations:
 max 4GiB for single data transfer
+
+feature level bitmask:
+0: request feature level present (part of handshake)
+1: dictionary compresed (data,nonce,tag) -> (data,dictionary hash,nonce,tag)
+2-7: ignored for now
 '''
 
 
@@ -44,25 +50,43 @@ class common:
             self.key_path=key+"-"+key_type+".key"
             
         self.key_type=key_type
-        self.filters=[
-        {"id": lzma.FILTER_LZMA2, "preset": 5},
-        ]
         self.header=self.password.encode()
         
 
-    def send(self,data,dh=False,connection=None,session_key=None,password=None):
+    def send(self,data,dh=False,connection=None,session_key=None,password=None,feature_level=[False]*8):
         if dh and password is not None: session_key=PBKDF2(password, 0, 32, count=10000, hmac_hash_module=SHA512)
         if connection is None and not dh: connection=self.connection
         if session_key is None and not dh: session_key=self.session_key
         assert session_key is not None or dh and password is None
-        
-        data = self.compress(data)
+        features=[False]*8
+        feature_level[1]=True
+
+        if dh:
+            features=feature_level
+            features[0]=True
+        if features[0] != True and feature_level[1]:
+            t = compression.compress(data,auto=True,a=0)
+            if len(t)==3:
+                dict_hash,features[1],data=t
+            else:
+                features[1],data=t
+        else:
+            data=compression.compress(data)
         if session_key is not None:
             data = self.encrypt(session_key,data)
 
+        
         l_data=len(data)-self.nonce_len-self.tag_len 
         if not l_data-4<=2**(8*4): raise Exception("don't send data over 4GiB")
-        data = struct.pack('<I',l_data)+struct.pack('<B',0)*2+data
+        
+        
+        if not features[0] and features[1] == True:
+            features="".join([str(int(features[i])) for i in range(8)]) #well it works
+            data = struct.pack('<I',l_data)+struct.pack('<B',int(features,2))+struct.pack('<B',0)+dict_hash+data
+        else:
+            features="".join([str(int(features[i])) for i in range(8)]) #well it works
+            data = struct.pack('<I',l_data)+struct.pack('<B',int(features,2))+struct.pack('<B',0)+data
+        
         checksum=SHAKE128.new(data).read(1)
 
         data = checksum+data
@@ -76,19 +100,39 @@ class common:
         assert session_key is not None or dh and password is None
         checksum = connection.recv(1) 
         l_data = connection.recv(4)
-        r1 = connection.recv(1)
+        _features = connection.recv(1)
         r2 = connection.recv(1)
-        x=struct.unpack('<I',l_data)[0]  
+        x=struct.unpack('<I',l_data)[0]
+        features = [bool(int(x)) for x in bin(struct.unpack("<B",_features)[0])[2:]]
+        while len(features)<8:
+            features=[False]+features
+        if features[0]==True:
+            self.remote_features=features
+            features=[0]*8
+        
+        if len(features)==1:features=[0]*8
+        if features[1]: dict_hash=connection.recv(4)
         data = connection.recv(x)
         nonce = connection.recv(self.nonce_len)
         tag = connection.recv(self.tag_len)
-        if SHAKE128.new(l_data+r1+r2+data+nonce+tag).read(1) != checksum:
+        if features[1]:
+            a=l_data+_features+r2+dict_hash+data+nonce+tag
+        else:
+            a=l_data+_features+r2+data+nonce+tag
+        if SHAKE128.new(a).read(1) != checksum:
             '''checks for in transport corruption, does not verify data, more for debeugging then anything else'''
             raise Exception("data corrupted or incopatible settings") 
+
+       
+        
         
         if session_key is not None:
             data = self.decrypt(session_key,data,nonce=nonce,tag=tag)
-        data = self.decompress(data)
+        
+        if features[1]==True:
+            data = compression.decompress(data,a=compression.dictionaries[dict_hash])
+        else:
+            data=compression.decompress(data)
 
         return data
     
@@ -312,5 +356,22 @@ if __name__ == "__main__":
     port=6021
     s=server(f"127.0.0.1:{port}","server.key",password="test",headless=False,nonce_len=8,tag_len=10)
     c=client(f"127.0.0.1:{port}","client.key",password="test",headless=False,nonce_len=8,tag_len=10) 
-    c.sendall("works")
+    # c.sendall("works")
+    time.sleep(1)
+    c.sendall("""I then thought that my father would be unjust if he ascribed my neglect
+to vice or faultiness on my part, but I am now convinced that he was
+justified in conceiving that I should not be altogether free from
+blame. A human being in perfection ought always to preserve a calm and
+peaceful mind and never to allow passion or a transitory desire to
+disturb his tranquillity. I do not think that the pursuit of knowledge
+is an exception to this rule. If the study to which you apply yourself
+has a tendency to weaken your affections and to destroy your taste for
+those simple pleasures in which no alloy can possibly mix, then that
+study is certainly unlawful, that is to say, not befitting the human
+mind. If this rule were always observed; if no man allowed any pursuit
+whatsoever to interfere with the tranquillity of his domestic
+affections, Greece had not been enslaved, Cæsar would have spared his
+country, America would have been discovered more gradually, and the
+empires of Mexico and Peru had not been destroyed.""")
+    
     print(s.accept().recvall())
