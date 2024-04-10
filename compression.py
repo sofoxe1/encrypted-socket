@@ -1,14 +1,16 @@
 import lzma
+import os
 from difflib import SequenceMatcher
 import pickle
 from sys import getsizeof
 import collections
+import struct
 from Crypto.Hash import SHAKE128
 
 #well it does stuff, resulting in better compression ratio then simply calling lzma.compress
-
-default_words = " ".join(open("default_words.txt","r").read().split("\n")).encode()
-dictionaries={SHAKE128.new(data=pickle.dumps(default_words)).read(4):default_words}
+dict_hash_len = 2 
+default_words = " ".join(open(f"{os.path.dirname(__file__)}/default_words.txt","r").read().split("\n")).encode()
+dictionaries={SHAKE128.new(data=pickle.dumps(default_words)).read(dict_hash_len):default_words}
 
 def create_dictionary(words,dict_size, blacklist=[],binary=False):
     if binary:
@@ -21,7 +23,7 @@ def create_dictionary(words,dict_size, blacklist=[],binary=False):
         for i in range(dict_size):
             frequent.append(c[i][0])
 
-        _hash=SHAKE128.new(pickle.dumps(frequent)).read(4)
+        _hash=SHAKE128.new(pickle.dumps(frequent)).read(2)
         try:
             dictionaries.update({_hash:frequent})
         except:
@@ -29,24 +31,26 @@ def create_dictionary(words,dict_size, blacklist=[],binary=False):
         return _hash
 
 
-
 def get_stuff(_a,ab): # magick function that does stuff
-    _a=bytearray(_a)
-    ab=bytearray(ab)
-
     match = SequenceMatcher(None, _a, ab).find_longest_match(
         0, len(_a), 0, len(ab))
-    m=_a[match.a:match.a + match.size]
-    _ab=ab[:match.a]+_a[match.a:match.a + match.size]+ab[match.a + match.size:]
-    stuff_data=ab[match.a + match.size:]+"<d>".encode()+ab[:match.a]+f"<d>{match.a}".encode()+f"<d>{match.size}".encode()
+    a=ab[match.a + match.size:]
+    b=ab[:match.a]
+    _a=struct.pack("<h",len(a))
+    _b=struct.pack("<h",len(b))
+    stuff_data=_a+_b+a+b+struct.pack("<h",match.size)+struct.pack("<h",match.a)
+    
     return stuff_data
-def decode_stuff(a,stuff_data): # magick function that undoes stuff
+def decode_stuff(q,stuff_data): # magick function that undoes stuff
 
-    stuff_data=stuff_data.split("<d>".encode())
-    assert len(stuff_data) == 4
-    match_size=int(stuff_data[3].decode())
-    match_a=int(stuff_data[2].decode())
-    return bytes(stuff_data[1]+a[match_a:match_a + match_size]+stuff_data[0])
+    _a=struct.unpack("<h",stuff_data[:2])[0]
+    _b=struct.unpack("<h",stuff_data[2:4])[0]
+    a=stuff_data[4:4+_a]
+    b=stuff_data[4+_a:4+_a+_b]
+    match_size=struct.unpack("<h",stuff_data[4+_a+_b:4+_a+_b+2])[0]
+    match_a=struct.unpack("<h",stuff_data[6+_a+_b:6+_a+_b+2])[0]
+    
+    return bytes(b+q[match_a:match_a + match_size]+a)
 
 def compress(data,auto=False,a=None,preset=4):
     # assert auto != bool(a is None 
@@ -59,7 +63,7 @@ def compress(data,auto=False,a=None,preset=4):
         if auto:
             z=lzma.compress(pickle.dumps(data),format=3,filters=[{"id": lzma.FILTER_LZMA2, "preset": preset}])
             if getsizeof(x)<getsizeof(z):
-                return SHAKE128.new(data=pickle.dumps(a)).read(4),True,x
+                return SHAKE128.new(data=pickle.dumps(a)).read(2),True,x
             else:
                 return False,z
         else:

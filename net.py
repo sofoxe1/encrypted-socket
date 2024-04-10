@@ -1,4 +1,5 @@
 import socket
+import sys
 import struct
 from Crypto.Cipher import AES
 from Crypto.PublicKey import ECC
@@ -11,7 +12,10 @@ import threading
 import time
 import sys
 import sqlite3
-import compression
+try:
+    import compression
+except:
+    from net_tools import compression
 #checksum(1B),l_data(4B),feature level (negotiated during handshake),1B reserved,(data,nonce,tag)
 
 '''
@@ -30,11 +34,12 @@ limitations:
 max 4GiB for single data transfer
 
 feature level bitmask:
-0: request feature level present (part of handshake)
+0: offer feature level (part of handshake)
 1: dictionary compresed (data,nonce,tag) -> (data,dictionary hash,nonce,tag)
 2-7: ignored for now
 '''
-
+g_features = [1]+[1,0,0,0,0,0,0,0,0]
+g_features = [bool(x) for x in g_features]
 
 supported_ecc=["p192","p224","p256","p384","p521","ed25519","ed448"]
 
@@ -81,10 +86,10 @@ class common:
         
         
         if not features[0] and features[1] == True:
-            features="".join([str(int(features[i])) for i in range(8)]) #well it works
+            features="".join([str(int(features[i])) for i in range(8)]) 
             data = struct.pack('<I',l_data)+struct.pack('<B',int(features,2))+struct.pack('<B',0)+dict_hash+data
         else:
-            features="".join([str(int(features[i])) for i in range(8)]) #well it works
+            features="".join([str(int(features[i])) for i in range(8)])
             data = struct.pack('<I',l_data)+struct.pack('<B',int(features,2))+struct.pack('<B',0)+data
         
         checksum=SHAKE128.new(data).read(1)
@@ -111,7 +116,7 @@ class common:
             features=[0]*8
         
         if len(features)==1:features=[0]*8
-        if features[1]: dict_hash=connection.recv(4)
+        if features[1]: dict_hash=connection.recv(compression.dict_hash_len)
         data = connection.recv(x)
         nonce = connection.recv(self.nonce_len)
         tag = connection.recv(self.tag_len)
