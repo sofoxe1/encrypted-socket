@@ -293,7 +293,10 @@ class server(common):
     
     def bind(self,address):
         ip,port = address.rsplit(":",1)
-        tcp_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        if ":"in ip:
+            tcp_socket = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
+        else:
+            tcp_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         tcp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         tcp_socket.bind((ip,int(port)))
         tcp_socket.listen()
@@ -338,7 +341,7 @@ class client(common):
         self.connect(address)
         
     def connect(self,address):
-        ip,port = address.split(":")
+        ip,port = address.rsplit(":",1)
         self.connection = socket.create_connection((ip, int(port)))
         self.address = address
         self.session_key = common.handshake(self,common.eph_priv(self),self.connection,client=(str(ip),port),password=self.password)
