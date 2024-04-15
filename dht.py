@@ -12,13 +12,16 @@ except:
 class HT:
 
     
-    def __init__(self,hash_lenght=4): 
+    def __init__(self,hash_lenght=4,deterministic=False): 
+        self.deterministic = deterministic
         self.hash_lenght=hash_lenght
         self.objects={}
         self._ht=lambda: self._hash_obj(pickle.dumps(self.objects))
         self.diff=[] 
     
     def _hash_obj(self,obj:bytes) -> bytes:
+        if self.deterministic:
+            return round(time.time(),1)
         return SHAKE128.new(data=obj).read(self.hash_lenght)
 
     def _action(self,obj:bytes =None,item=None) -> bool:
@@ -88,8 +91,8 @@ class HT:
     def remove_item(self,item):
         return self._action(item=item)
     
-    def exists(self,obj):
-        return self._hash_obj(obj,False) in self.objects
+    def exists(self,item):
+        return item in self.objects
 
     def __str__(self):
         return str(self.objects)
@@ -111,14 +114,24 @@ class HT:
 
 
 class DHT:
-    def __init__(self,password,port):
+    def __init__(self,password,port,deterministic=False):
         self.password = password
-        self.storage = HT()
-        self.remote_ht=[]
+        self.storage = HT(deterministic=deterministic)
+        self.remote_ht={}
         self.local = []
         self.listener=server(f":::{port}","buff_server.key",password=password,headless=True)
         a=threading.Thread(target=self.accept,args=())
         a.start()
+        gb=threading.Thread(target=self.gb,args=())
+        gb.start()
+
+    def gb(self):
+        while True:
+            time.sleep(600)
+            for d in self.local:
+                if not bool(int(time.time()) - d[1]<= 0 or d[1] == 0):
+                    self.objects.pop(d[0])
+                    self.local.pop(d)
 
     def accept(self):
         self.active_connections=[]
@@ -134,15 +147,23 @@ class DHT:
             if type(msg) is list:
                 match msg[0]:
                     case 1:
-                        self.remote_ht[conn.peername]=msg[1]
+                        for x in msg[1]:
+                            self.remote_ht[x]=conn
                     case 2:
-                        print("q")
-                        self.add(msg[2])
-                        print(self.storage.hash(msg[2]))
+                        self.add(msg[2],ttl=3600)
+                    case 3:
+                        if self.storage.exists(msg[1]):
+                            conn.sendall([2,msg[1],self.storage[msg[1]]])
+                    case 4:
+                        conn.sendall([1,self.storage.keys()]) 
+                    case _:
+                        raise ValueError(f"unknown command: {msg[0]}")
+
 
             else:
                 raise Exception("dfkusghfj")
     
+
     def connect(self,address):
         remote=client(address,"ht.key",password=self.password,headless=True,trust=True)
         self.active_connections.append(remote)
@@ -152,14 +173,18 @@ class DHT:
     def broadcast(self):
         for conn in self.active_connections:
             conn.sendall([1,self.storage.keys()]) 
+        
+    def request_update(self):
+        for conn in self.active_connections:
+            conn.sendall([4]) 
     
     def push(self):
         for conn in self.active_connections:
             for d in self.local:
                 print(d)
-                if bool(int(time.time()) - d[1]<= 0 or d[1] == 0)   and d[2]:
+                if d[2]:
                     conn.sendall([2,d[0],self.storage[d[0]]])
-    
+
     def add(self,data,push=False,ttl=0): 
         expires=0
         if ttl != 0:
@@ -168,26 +193,45 @@ class DHT:
             self.local.append([self.storage.hash(data),expires,push])
 
     def keys(self) -> list:
-        return self.storage.keys()
+        keys=self.storage.keys()
+        if self.remote_ht:
+            for r in self.remote_ht.values():
+                keys.extend(r)
+        return keys
+
+    def retrieve(self,item):
+        self.remote_ht[item].sendall([3,item])
+        for i in range(100):
+            if item in self.storage.keys():
+                return self.storage[item]
+            time.sleep(0.1)
+        raise Exception("retival time out")
         
     def __getitem__(self,item):
-        return self.storage[item]
+        if item in self.storage.keys():
+            return self.storage[item]
+        elif item in self.remote_ht:
+            return self.retrieve(item)
+        else:
+            raise KeyError("value doesn't exist")
 
     
 
 
 if __name__ == "__main__":        
-    a=DHT(password="pass123",port=7820)
+    a=DHT(password="pass123",port=7820,deterministic=True)
     a.add("test1".encode(),push=True)
-    b=DHT(password="pass123",port=7821)
+    b=DHT(password="pass123",port=7821,deterministic=True)
     b.add("b2".encode())
+    time.sleep(0.2)
+    b.add("sdrfhjgdjashk".encode())
     print(a.storage)
     print(b.storage)
     a.connect("127.0.0.1:7821")
-    a.push()
+    a.broadcast()
     time.sleep(1)
     print(a.storage)
     print(b.storage)
-    print(b[b.keys()[1]])
+    print(b[a.keys()[0]])
 
  
