@@ -31,7 +31,7 @@ def create_dictionary(words,dict_size, blacklist=[],binary=False):
         return _hash
 
 
-def get_stuff(_a,ab): # magick function that does stuff
+def get_stuff(_a,ab): # magick function that does stuff, there is probably a better way to do this
     match = SequenceMatcher(None, _a, ab).find_longest_match(
         0, len(_a), 0, len(ab))
     a=ab[match.a + match.size:]

@@ -15,7 +15,7 @@ import sqlite3
 try:
     import compression
 except:
-    from net_tools import compression
+    from . import compression
 #checksum(1B),l_data(4B),feature level (negotiated during handshake),1B reserved,(data,nonce,tag)
 
 '''
@@ -141,12 +141,6 @@ class common:
 
         return data
     
-    def compress(self,data):
-        return lzma.compress(pickle.dumps(data),format=3,filters=self.filters) # crc is not necessary and format other then RAW is waste of few bytes
-    
-    def decompress(self,data):
-        return pickle.loads(lzma.decompress(data,format=3,filters=self.filters))
-    
     def handshake(self,eph_priv,connection,server=False,client=None,password=None):
         if server:
             auth=self.recv(connection=connection,dh=True,password=password)
@@ -251,6 +245,11 @@ class common:
         cipher = AES.new(session_key, AES.MODE_GCM,nonce=nonce, mac_len=self.tag_len)
         cipher.update(self.header) #i have no idea it is
         return cipher.decrypt_and_verify(data,tag)
+    
+    def peername(self):
+        return f"{self.connection.getpeername()[0]}:{self.connection.getpeername()[1]}"
+    
+    
 
 class remote_client(common):
     def __init__(self, connection, ip, key,key_type=None,password=None,headless=None,nonce_len=None,tag_len=None):
@@ -358,11 +357,13 @@ class client(common):
     def reconnect(self):
         self.close()
         self.connect(self.address)
+    
+    
 
 
 if __name__ == "__main__":
     port=6021
-    s=server(f"127.0.0.1:{port}","server.key",password="test",headless=False,nonce_len=8,tag_len=10)
+    s=server(f":::{port}","server.key",password="test",headless=False,nonce_len=8,tag_len=10)
     c=client(f"127.0.0.1:{port}","client.key",password="test",headless=False,nonce_len=8,tag_len=10) 
     # c.sendall("works")
     time.sleep(1)
