@@ -21,7 +21,7 @@ except:
 '''
 creates encrypted connection between two devices
 features:
-aes-gcm encryption
+"safe" aes-gcm encryption
 compressions
 Elliptic-curve Diffie–Hellman
 preshared password used for key exchange (optional) 
@@ -103,6 +103,7 @@ class common:
         if connection is None and not dh: connection=self.connection
         if session_key is None and not dh: session_key=self.session_key
         assert session_key is not None or dh and password is None
+        
         checksum = connection.recv(1) 
         l_data = connection.recv(4)
         _features = connection.recv(1)
@@ -128,9 +129,6 @@ class common:
             '''checks for in transport corruption, does not verify data, more for debeugging then anything else'''
             raise Exception("data corrupted or incopatible settings") 
 
-       
-        
-        
         if session_key is not None:
             data = self.decrypt(session_key,data,nonce=nonce,tag=tag)
         
@@ -248,6 +246,9 @@ class common:
     
     def peername(self):
         return f"{self.connection.getpeername()[0]}:{self.connection.getpeername()[1]}"
+
+    def peer_ip(self):
+        return self.connection.getpeername()[0]
     
     
 
@@ -365,7 +366,6 @@ if __name__ == "__main__":
     port=6021
     s=server(f":::{port}","server.key",password="test",headless=False,nonce_len=8,tag_len=10)
     c=client(f"127.0.0.1:{port}","client.key",password="test",headless=False,nonce_len=8,tag_len=10) 
-    # c.sendall("works")
     time.sleep(1)
     c.sendall("""I then thought that my father would be unjust if he ascribed my neglect
 to vice or faultiness on my part, but I am now convinced that he was

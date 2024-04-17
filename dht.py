@@ -4,6 +4,8 @@ import pickle
 import time
 import inspect
 import threading
+from os.path import exists
+import numpy as np
 try:
     from .net import client,server
 except:
@@ -114,12 +116,16 @@ class HT:
 
 
 class DHT:
-    def __init__(self,password,port,deterministic=False):
+    def __init__(self,password,listen_ip="::",db_path="dht_peers.db"):
         self.password = password
-        self.storage = HT(deterministic=deterministic)
+        self.storage = HT()
         self.remote_ht={}
+        self.peers=set()
         self.local = []
-        self.listener=server(f":::{port}","buff_server.key",password=password,headless=True)
+        self.db_path=db_path
+        if exist(db_path):
+            self.peers=set(np.load)
+        self.listener=server(f"{listen_ip}:{7821}",key="",password=password,headless=True)
         a=threading.Thread(target=self.accept,args=())
         a.start()
         gb=threading.Thread(target=self.gb,args=())
@@ -147,6 +153,8 @@ class DHT:
             if type(msg) is list:
                 match msg[0]:
                     case 1:
+                        self.peers.add(conn.peer_ip()) #won't bother with identification
+                        np.save(self.db_path,self.peers)
                         for x in msg[1]:
                             self.remote_ht[x]=conn
                     case 2:
@@ -161,11 +169,11 @@ class DHT:
 
 
             else:
-                raise Exception("dfkusghfj")
+                raise Exception("stuff broke")
     
 
     def connect(self,address):
-        remote=client(address,"ht.key",password=self.password,headless=True,trust=True)
+        remote=client(address,key="",password=self.password,headless=True,trust=True)
         self.active_connections.append(remote)
         t=threading.Thread(target=self.handler, args=(remote,))
         t.start()
@@ -219,9 +227,9 @@ class DHT:
 
 
 if __name__ == "__main__":        
-    a=DHT(password="pass123",port=7820,deterministic=True)
+    a=DHT(password="pass123")
     a.add("test1".encode(),push=True)
-    b=DHT(password="pass123",port=7821,deterministic=True)
+    b=DHT(password="pass123")
     b.add("b2".encode())
     time.sleep(0.2)
     b.add("sdrfhjgdjashk".encode())

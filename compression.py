@@ -6,6 +6,10 @@ from sys import getsizeof
 import collections
 import struct
 from Crypto.Hash import SHAKE128
+try:
+    from shared import bytelist
+except:
+    from .shared import bytelist
 
 #well it does stuff, resulting in better compression ratio then simply calling lzma.compress
 dict_hash_len = 2 
@@ -42,14 +46,13 @@ def get_stuff(_a,ab): # magick function that does stuff, there is probably a bet
     
     return stuff_data
 def decode_stuff(q,stuff_data): # magick function that undoes stuff
-
-    _a=struct.unpack("<h",stuff_data[:2])[0]
-    _b=struct.unpack("<h",stuff_data[2:4])[0]
-    a=stuff_data[4:4+_a]
-    b=stuff_data[4+_a:4+_a+_b]
-    match_size=struct.unpack("<h",stuff_data[4+_a+_b:4+_a+_b+2])[0]
-    match_a=struct.unpack("<h",stuff_data[6+_a+_b:6+_a+_b+2])[0]
-    
+    stuff_data=bytelist(stuff_data)
+    _a=struct.unpack("<h",stuff_data.read(2))[0]
+    _b=struct.unpack("<h",stuff_data.read(2))[0]
+    a=stuff_data.read(_a)
+    b=stuff_data.read(_b)
+    match_size=struct.unpack("<h",stuff_data.read(2))[0]
+    match_a=struct.unpack("<h",stuff_data.read(2))[0]
     return bytes(b+q[match_a:match_a + match_size]+a)
 
 def compress(data,auto=False,a=None,preset=4):
