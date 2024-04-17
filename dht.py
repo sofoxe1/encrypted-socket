@@ -116,16 +116,16 @@ class HT:
 
 
 class DHT:
-    def __init__(self,password,listen_ip="::",db_path="dht_peers.db"):
+    def __init__(self,password,listen="::",db_path="dht_peers.npy"):
         self.password = password
         self.storage = HT()
         self.remote_ht={}
         self.peers=set()
         self.local = []
         self.db_path=db_path
-        if exist(db_path):
+        if exists(db_path):
             self.peers=set(np.load)
-        self.listener=server(f"{listen_ip}:{7821}",key="",password=password,headless=True)
+        self.listener=server(listen,key="",password=password,headless=True)
         a=threading.Thread(target=self.accept,args=())
         a.start()
         gb=threading.Thread(target=self.gb,args=())
@@ -227,15 +227,15 @@ class DHT:
 
 
 if __name__ == "__main__":        
-    a=DHT(password="pass123")
+    a=DHT(password="pass123",listen=":::7821")
     a.add("test1".encode(),push=True)
-    b=DHT(password="pass123")
+    b=DHT(password="pass123",listen=":::7822")
     b.add("b2".encode())
     time.sleep(0.2)
     b.add("sdrfhjgdjashk".encode())
     print(a.storage)
     print(b.storage)
-    a.connect("127.0.0.1:7821")
+    a.connect("127.0.0.1:7822")
     a.broadcast()
     time.sleep(1)
     print(a.storage)

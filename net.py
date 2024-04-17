@@ -232,7 +232,7 @@ class common:
     def loadkey(self):
 
         if self.key_path is None and self.password is None:
-            raise Exception("you have two specify key path/password or both")
+            raise Exception("you have to specify key path/password or both")
         elif self.key_path is None and self.password is not None:
             self.key=ECC.generate(curve=self.key_type)
         elif exists(self.key_path):
