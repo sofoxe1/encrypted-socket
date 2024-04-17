@@ -36,7 +36,8 @@ max 4GiB for single data transfer
 feature level bitmask:
 0: offer feature level (part of handshake)
 1: dictionary compresed (data,nonce,tag) -> (data,dictionary hash,nonce,tag)
-2-7: ignored for now
+2: memory only keys - do not save
+3-7: ignored for now
 '''
 g_features = [1]+[1,0,0,0,0,0,0,0,0]
 g_features = [bool(x) for x in g_features]
@@ -50,12 +51,17 @@ def kdf(x):
 class common:
     
     def __init__(self,key=None,key_type="p256"):
-        if type(key) is str:
+        self.write_key = True
+        if key is None:
+            self.key_path = key
+            self.write_key = False
+        
+        else:
             if key.endswith(".key"): key=key[:-4]
             self.key_path=key+"-"+key_type+".key"
-            
+
         self.key_type=key_type
-        self.header=self.password.encode()
+        if self.password is not None: self.header=self.password.encode()
         
 
     def send(self,data,dh=False,connection=None,session_key=None,password=None,feature_level=[False]*8):
@@ -77,11 +83,14 @@ class common:
                 features[1],data=t
         else:
             data=compression.compress(data)
+
+        l_data=0
         if session_key is not None:
             data = self.encrypt(session_key,data)
+            l_data=-self.nonce_len-self.tag_len 
 
         
-        l_data=len(data)-self.nonce_len-self.tag_len 
+        l_data+=len(data)
         if not l_data-4<=2**(8*4): raise Exception("don't send data over 4GiB")
         
         
@@ -119,8 +128,11 @@ class common:
         if len(features)==1:features=[0]*8
         if features[1]: dict_hash=connection.recv(compression.dict_hash_len)
         data = connection.recv(x)
-        nonce = connection.recv(self.nonce_len)
-        tag = connection.recv(self.tag_len)
+        if session_key is not None:
+            nonce = connection.recv(self.nonce_len)
+            tag = connection.recv(self.tag_len)
+        else:
+            nonce,tag = b"",b""
         if features[1]:
             a=l_data+_features+r2+dict_hash+data+nonce+tag
         else:
@@ -181,9 +193,10 @@ class common:
                     elif not self.trust and self.headless:
                         raise Exception(f"key from {client[0]} not trusted")
                     
-                    if not self.headless: print("adding peer key to db")
-                    known_keys.execute("INSERT INTO keys VALUES (?,?)",(client[0],static_pub.export_key(format="PEM")))
-                    known_keys_.commit()
+                    if self.write_key:
+                        if not self.headless: print("adding peer key to db")
+                        known_keys.execute("INSERT INTO keys VALUES (?,?)",(client[0],static_pub.export_key(format="PEM")))
+                        known_keys_.commit()
                     known_keys_.close()
                 
             else:
@@ -217,7 +230,12 @@ class common:
         else: raise Exception(f"key format {self.key_type} not supported")
     
     def loadkey(self):
-        if exists(self.key_path):
+
+        if self.key_path is None and self.password is None:
+            raise Exception("you have two specify key path/password or both")
+        elif self.key_path is None and self.password is not None:
+            self.key=ECC.generate(curve=self.key_type)
+        elif exists(self.key_path):
             with open(self.key_path,"r") as f:
                 if self.key_type in supported_ecc: 
                     self.key=ECC.import_key(f.read(),curve_name=self.key_type)
@@ -329,7 +347,7 @@ class server(common):
             
                 
 class client(common):
-    def __init__(self,address,key,db_name="known_keys.db",key_type="p256",password=None, headless=True,trust=False,nonce_len=12,tag_len=16):
+    def __init__(self,address,key,db_name="known_keys.db",key_type="p256",t_key=False,password=None, headless=True,trust=False,nonce_len=12,tag_len=16):
         self.password = password
         self.nonce_len=nonce_len
         self.tag_len=tag_len
@@ -364,8 +382,8 @@ class client(common):
 
 if __name__ == "__main__":
     port=6021
-    s=server(f":::{port}","server.key",password="test",headless=False,nonce_len=8,tag_len=10)
-    c=client(f"127.0.0.1:{port}","client.key",password="test",headless=False,nonce_len=8,tag_len=10) 
+    s=server(f":::{port}",key="s",headless=True,nonce_len=8,tag_len=10)
+    c=client(f"127.0.0.1:{port}",key="c",headless=True,nonce_len=8,tag_len=10,trust=True) 
     time.sleep(1)
     c.sendall("""I then thought that my father would be unjust if he ascribed my neglect
 to vice or faultiness on my part, but I am now convinced that he was
