@@ -16,7 +16,7 @@ try:
     import compression
 except:
     from . import compression
-#checksum(1B),l_data(4B),feature level (negotiated during handshake),1B reserved,(data,nonce,tag)
+#checksum(1B),l_data(2B),feature level (negotiated during handshake),1B reserved,(data,nonce,tag)
 
 '''
 creates encrypted connection between two devices
@@ -91,15 +91,16 @@ class common:
 
         
         l_data+=len(data)
-        if not l_data-4<=2**(8*4): raise Exception("don't send data over 4GiB")
+        if not l_data-5<=2**(8*2): 
+            raise Exception("don't send data over 65.578 kB")
         
         
         if not features[0] and features[1] == True:
             features="".join([str(int(features[i])) for i in range(8)]) 
-            data = struct.pack('<I',l_data)+struct.pack('<B',int(features,2))+struct.pack('<B',0)+dict_hash+data
+            data = struct.pack('<H',l_data)+struct.pack('<B',int(features,2))+struct.pack('<B',0)+dict_hash+data
         else:
             features="".join([str(int(features[i])) for i in range(8)])
-            data = struct.pack('<I',l_data)+struct.pack('<B',int(features,2))+struct.pack('<B',0)+data
+            data = struct.pack('<H',l_data)+struct.pack('<B',int(features,2))+struct.pack('<B',0)+data
         
         checksum=SHAKE128.new(data).read(1)
 
@@ -114,17 +115,16 @@ class common:
         assert session_key is not None or dh and password is None
         
         checksum = connection.recv(1) 
-        l_data = connection.recv(4)
+        l_data = connection.recv(2)
         _features = connection.recv(1)
         r2 = connection.recv(1)
-        x=struct.unpack('<I',l_data)[0]
+        x=struct.unpack('<H',l_data)[0]
         features = [bool(int(x)) for x in bin(struct.unpack("<B",_features)[0])[2:]]
         while len(features)<8:
             features=[False]+features
         if features[0]==True:
             self.remote_features=features
             features=[0]*8
-        
         if len(features)==1:features=[0]*8
         if features[1]: dict_hash=connection.recv(compression.dict_hash_len)
         data = connection.recv(x)

@@ -141,7 +141,7 @@ class P2P:
                 self.handler(remote.peer_id,msg)
 
 class Sync:
-    def __init__(self,password,chunk_size=1024*1024,address=":::5483",db_path="peers.db",key="sync.key"):
+    def __init__(self,password,chunk_size=65578-512,address=":::5483",db_path="peers.db",key="sync.key"):
         self.chunk_size = chunk_size
         self.files=[]
         self.p2p=P2P(password=password,address=address,handler=self.handler,db_path=db_path,key=key)
@@ -165,7 +165,7 @@ class Sync:
         match data[0]:
             case 0:
                 for x in data[1]:
-                    self.peer_files[peer_id]=x
+                    self.peer_files[x[0]]=[peer_id]+x[1:]
             case 1:
                 self.p2p.peer_send(peer_id,[0,self.files])
             case 2:
@@ -189,10 +189,20 @@ class Sync:
     def request_update(self):
         self.p2p.broadcast([1])   
     
-    def _peer_file(self,file_hash):
+    def _get_remote_hash(self,file_name):
+        if self.isfilehash(file_name):
+            return file_name
+        q=[]
         for v in self.peer_files:
-            if self.peer_files[v][0]==file_hash:
-                return v
+            if self.peer_files[v][1]==file_name:
+                q.append(v)
+        if len(q)==0:
+            raise P2PException(f"remote file {_file} not found")
+        elif len(q)>1:
+            raise Exception(f"multiple files {_file} specify peer or use file hash")
+        else:
+            return q[0]
+
 
     def isfilehash(self,data):
         return type(data) is bytes and len(data) == 128
@@ -201,8 +211,8 @@ class Sync:
         file_hash=None
         for i in range(10):
             try:
-                file_hash=self._peer_file_name(_file)
-                peer_id=self._peer_file(file_hash)
+                file_hash=self._get_remote_hash(_file)
+                peer_id=self._get_peer_id(file_hash)
                 break
             except P2PException:
                 time.sleep(0.2)
@@ -217,7 +227,7 @@ class Sync:
             t.join()
 
     def _downloader(self,f_out,file_hash,peer_id):
-        chunks=self.peer_files[peer_id][3]
+        chunks=self.peer_files[file_hash][3]
         
         for i in tqdm(chunks):
             s=self.s
@@ -237,24 +247,9 @@ class Sync:
                 break
                 
 
-    def _peer_file_name(self,_file,peer_id=None):
-        q=[]
-        if self.isfilehash(_file):
-            return _file
-        if peer_id is not None:
-            z=self.peer_files[peer_id]
-        else:
-            z=self.peer_files.values()
-        for v in z:
-            if v[1]==_file:
-                q.append(v[0])
-        if len(q)==0:
-            raise P2PException(f"remote file {_file} not found")
-        elif len(q)>1:
-            raise Exception(f"multiple files {_file} specify peer or use file hash")
-        else:
-            return q[0]
-
+    def _get_peer_id(self,file_hash):
+        return self.peer_files[file_hash][0]
+        
 
 
 
@@ -271,10 +266,11 @@ if __name__ == "__main__":
     q3.p2p.add_peer(":::5484")
     time.sleep(0.5)
     q3.request_update()
-    time.sleep(0.5)
+    time.sleep(1)
     print(q2.p2p.list_peers(_all=True))
+    print(q3.peer_files)
 
-    q3.download("/home/user/blender0040-0100.mkv","a.bin",blocking=True,overwrite=True)
+    q3.download("/home/user/amdvbflash_win_5.0.567.zip","a.bin",blocking=True,overwrite=True)
 
 
     
