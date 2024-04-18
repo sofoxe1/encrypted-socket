@@ -169,6 +169,11 @@ class common:
             auth=self.recv(connection=connection,dh=True,password=password)
         
         static_pub=ECC.import_key(auth[0])
+
+        h_obj = BLAKE2b.new(digest_bits=128)
+        h_obj.update(static_pub.public_key().export_key(format="raw"))
+        self.peer_id=h_obj.hexdigest()
+
         h_obj = BLAKE2b.new(digest_bits=64)
         if server:
             h_obj.update(self.key.public_key().export_key(format="raw"))
@@ -267,6 +272,16 @@ class common:
 
     def peer_ip(self):
         return self.connection.getpeername()[0]
+
+    def id(self):
+        h_obj = BLAKE2b.new(digest_bits=128)
+        h_obj.update(self.key.public_key().export_key(format="raw"))
+        return h_obj.hexdigest()
+
+    def peerid(self):
+        return self.peer_id
+
+
     
     
 
