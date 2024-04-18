@@ -70,7 +70,7 @@ class common:
         if session_key is None and not dh: session_key=self.session_key
         assert session_key is not None or dh and password is None
         features=[False]*8
-        feature_level[1]=True
+        #feature_level[1]=True
 
         if dh:
             features=feature_level
