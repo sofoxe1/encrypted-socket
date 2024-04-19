@@ -30,17 +30,13 @@ ability to set nonce and tag len for aes-gcm
 no concern for coding conventions 
 random variable/function names
 
-limitations:
-max 4GiB for single data transfer
-
-feature level bitmask:
-0: offer feature level (part of handshake)
+options bitmask:
+0: don't decompress
 1: dictionary compresed (data,nonce,tag) -> (data,dictionary hash,nonce,tag)
-2: memory only keys - do not save
+2: fragmented (unset for last packet)
 3-7: ignored for now
 '''
-g_features = [1]+[1,0,0,0,0,0,0,0,0]
-g_features = [bool(x) for x in g_features]
+
 
 supported_ecc=["p192","p224","p256","p384","p521","ed25519","ed448"]
 
@@ -52,8 +48,8 @@ class common:
     
     def __init__(self,key=None,key_type="p256"):
         self.write_key = True
-        if key is None:
-            self.key_path = key
+        if key is None or key == "": #idk why it can be both
+            self.key_path = None
             self.write_key = False
         
         else:
@@ -64,28 +60,25 @@ class common:
         if self.password is not None: self.header=self.password.encode()
         
 
-    def send(self,data,dh=False,connection=None,session_key=None,password=None,feature_level=[False]*8):
+    def send(self,data,dh=False,connection=None,password=None,compress=True,auto_compress=False):
         if dh and password is not None: session_key=PBKDF2(password, 0, 32, count=10000, hmac_hash_module=SHA512)
         if connection is None and not dh: connection=self.connection
-        if session_key is None and not dh: session_key=self.session_key
-        assert session_key is not None or dh and password is None
-        features=[False]*8
-        #feature_level[1]=True
+        if not dh: session_key=self.session_key
 
-        if dh:
-            features=feature_level
-            features[0]=True
-        if features[0] != True and feature_level[1]:
+        options=[False for i in range(8)]
+        if compress and auto_compress:
             t = compression.compress(data,auto=True,a=0)
             if len(t)==3:
-                dict_hash,features[1],data=t
+                dict_hash,options[1],data=t
             else:
                 features[1],data=t
-        else:
+        elif compress and not auto_compress:
             data=compression.compress(data)
+        else:
+            options[0]=True
 
         l_data=0
-        if session_key is not None:
+        if "session_key" in locals():
             data = self.encrypt(session_key,data)
             l_data=-self.nonce_len-self.tag_len 
 
@@ -95,12 +88,12 @@ class common:
             raise Exception("don't send data over 65.578 kB")
         
         
-        if not features[0] and features[1] == True:
-            features="".join([str(int(features[i])) for i in range(8)]) 
-            data = struct.pack('<H',l_data)+struct.pack('<B',int(features,2))+struct.pack('<B',0)+dict_hash+data
+        if options[1] == True:
+            options="".join([str(int(options[i])) for i in range(8)]) 
+            data = struct.pack('<H',l_data)+struct.pack('<B',int(options,2))+struct.pack('<B',0)+dict_hash+data
         else:
-            features="".join([str(int(features[i])) for i in range(8)])
-            data = struct.pack('<H',l_data)+struct.pack('<B',int(features,2))+struct.pack('<B',0)+data
+            options="".join([str(int(options[i])) for i in range(8)])
+            data = struct.pack('<H',l_data)+struct.pack('<B',int(options,2))+struct.pack('<B',0)+data
         
         checksum=SHAKE128.new(data).read(1)
 
@@ -108,46 +101,44 @@ class common:
         connection.sendall(data)        
         return True
     
-    def recv(self,session_key=None,connection=None,dh=False,password=None):
+    def recv(self,connection=None,dh=False,password=None):
         if dh and password is not None: session_key=PBKDF2(password, 0, 32, count=10000, hmac_hash_module=SHA512)
         if connection is None and not dh: connection=self.connection
-        if session_key is None and not dh: session_key=self.session_key
-        assert session_key is not None or dh and password is None
+        if not dh: session_key=self.session_key
+        
         
         checksum = connection.recv(1) 
         l_data = connection.recv(2)
-        _features = connection.recv(1)
+        _options = connection.recv(1)
         r2 = connection.recv(1)
         x=struct.unpack('<H',l_data)[0]
-        features = [bool(int(x)) for x in bin(struct.unpack("<B",_features)[0])[2:]]
-        while len(features)<8:
-            features=[False]+features
-        if features[0]==True:
-            self.remote_features=features
-            features=[0]*8
-        if len(features)==1:features=[0]*8
-        if features[1]: dict_hash=connection.recv(compression.dict_hash_len)
+        options = [bool(int(x)) for x in bin(struct.unpack("<B",_options)[0])[2:]]
+        while len(options)<8:
+            options=[False]+options
+        
+        if options[1]: dict_hash=connection.recv(compression.dict_hash_len)
         data = connection.recv(x)
-        if session_key is not None:
+        if "session_key" in locals():
             nonce = connection.recv(self.nonce_len)
             tag = connection.recv(self.tag_len)
         else:
             nonce,tag = b"",b""
-        if features[1]:
-            a=l_data+_features+r2+dict_hash+data+nonce+tag
+        if options[1]:
+            a=l_data+_options+r2+dict_hash+data+nonce+tag
         else:
-            a=l_data+_features+r2+data+nonce+tag
+            a=l_data+_options+r2+data+nonce+tag
         if SHAKE128.new(a).read(1) != checksum:
             '''checks for in transport corruption, does not verify data, more for debeugging then anything else'''
             raise Exception("data corrupted or incopatible settings") 
 
-        if session_key is not None:
+        if "session_key" in locals():
             data = self.decrypt(session_key,data,nonce=nonce,tag=tag)
         
-        if features[1]==True:
-            data = compression.decompress(data,a=compression.dictionaries[dict_hash])
-        else:
-            data=compression.decompress(data)
+        if not options[0]:
+            if options[1]:
+                data = compression.decompress(data,a=compression.dictionaries[dict_hash])
+            else:
+                data=compression.decompress(data)
 
         return data
     
@@ -157,13 +148,13 @@ class common:
             self.send(
                 (self.key.public_key().export_key(format="PEM"),
                        eph_priv.public_key().export_key(format="PEM")
-                 ), connection=connection,dh=True,password=password)
+                 ,self.write_key), connection=connection,dh=True,password=password)
 
         else:
             self.send(
                 (self.key.public_key().export_key(format="PEM"),
                        eph_priv.public_key().export_key(format="PEM")
-                 ),
+                 ,self.write_key),
                       connection=connection,dh=True,password=password)
                       
             auth=self.recv(connection=connection,dh=True,password=password)
@@ -198,7 +189,7 @@ class common:
                     elif not self.trust and self.headless:
                         raise Exception(f"key from {client[0]} not trusted")
                     
-                    if self.write_key:
+                    if self.write_key and auth[2]:
                         if not self.headless: print("adding peer key to db")
                         known_keys.execute("INSERT INTO keys VALUES (?,?)",(client[0],static_pub.export_key(format="PEM")))
                         known_keys_.commit()
@@ -235,11 +226,11 @@ class common:
         else: raise Exception(f"key format {self.key_type} not supported")
     
     def loadkey(self):
-
         if self.key_path is None and self.password is None:
             raise Exception("you have to specify key path/password or both")
         elif self.key_path is None and self.password is not None:
             self.key=ECC.generate(curve=self.key_type)
+            self.memory_key=True
         elif exists(self.key_path):
             with open(self.key_path,"r") as f:
                 if self.key_type in supported_ecc: 
@@ -252,6 +243,7 @@ class common:
                 if self.key_type in supported_ecc:
                     self.key=ECC.generate(curve=self.key_type)
                 else: raise Exception(f"key format {self.key_type} not supported")
+                print(type(self))
                 f.write(self.key.export_key(format="PEM"))
 
     def encrypt(self,session_key,data):
@@ -300,11 +292,11 @@ class remote_client(common):
     def close(self):
         self.connection.close()
     
-    def sendall(self, data):
-        return common.send(self,data, connection=self.connection, session_key=self.session_key)
+    def sendall(self, data,compress=True,auto_compress=False):
+        return common.send(self,data,compress=compress,auto_compress=auto_compress)
 
     def recvall(self):
-        return common.recv(self,session_key=self.session_key, connection=self.connection)
+        return common.recv(self)
 
 
 
@@ -379,8 +371,8 @@ class client(common):
         self.address = address
         self.session_key = common.handshake(self,common.eph_priv(self),self.connection,client=(str(ip),port),password=self.password)
     
-    def sendall(self,data):
-        common.send(self,data)
+    def sendall(self,data,compress=True,auto_compress=False):
+        common.send(self,data,compress=compress,auto_compress=auto_compress)
 
     def recvall(self):
         return common.recv(self)
@@ -397,8 +389,8 @@ class client(common):
 
 if __name__ == "__main__":
     port=6021
-    s=server(f":::{port}",key="s",headless=True,nonce_len=8,tag_len=10)
-    c=client(f"127.0.0.1:{port}",key="c",headless=True,nonce_len=8,tag_len=10,trust=True) 
+    s=server(f":::{port}",key="",password="123",headless=True,nonce_len=8,tag_len=10)
+    c=client(f"127.0.0.1:{port}",key="",password="123",headless=True,nonce_len=8,tag_len=10,trust=True) 
     time.sleep(1)
     c.sendall("""I then thought that my father would be unjust if he ascribed my neglect
 to vice or faultiness on my part, but I am now convinced that he was
