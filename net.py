@@ -72,7 +72,7 @@ class common:
             if len(t)==3:
                 dict_hash,options[1],data=t
             else:
-                features[1],data=t
+                options[1],data=t
         elif compress and not auto_compress:
             data=compression.compress(data)
         else:
