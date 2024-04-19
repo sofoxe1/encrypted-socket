@@ -14,11 +14,11 @@ import sys
 import sqlite3
 try:
     import compression
-    from shared import _hash
+    from shared import _hash,bytelist
 except:
     from . import compression
-    from .shared import _hash
-#checksum(1B),l_data(2B),feature level (negotiated during handshake),1B reserved,(data,nonce,tag)
+    from .shared import _hash,bytelist
+#checksum(1B),l_data(2B),options(1B),reserved(1B),(data,nonce,tag)
 
 '''
 creates encrypted connection between two devices
@@ -33,7 +33,7 @@ no concern for coding conventions
 random variable/function names
 
 options bitmask:
-0: don't decompress
+0: no compression
 1: dictionary compresed (data,nonce,tag) -> (data,dictionary hash,nonce,tag)
 2: fragmented (unset for last packet)
 3-7: ignored for now
@@ -41,7 +41,7 @@ options bitmask:
 
 
 supported_ecc=["p192","p224","p256","p384","p521","ed25519","ed448"]
-
+mtu=512
 
 def kdf(x):
     return SHAKE256.new(x).read(32)
@@ -61,12 +61,11 @@ class common:
         self.key_type=key_type
         if self.password is not None: self.header=self.password.encode()
         
-
     def send(self,data,dh=False,connection=None,password=None,compress=True,auto_compress=False):
         if dh and password is not None: session_key=PBKDF2(password, 0, 32, count=10000, hmac_hash_module=SHA512)
-        if connection is None and not dh: connection=self.connection
         if not dh: session_key=self.session_key
-
+        if connection is None and not dh: connection=self.connection
+        
         options=[False for i in range(8)]
         if compress and auto_compress:
             t = compression.compress(data,auto=True,a=0)
@@ -79,17 +78,25 @@ class common:
         else:
             options[0]=True
 
-        l_data=0
         if "session_key" in locals():
             data = self.encrypt(session_key,data)
-            l_data=-self.nonce_len-self.tag_len 
 
-        
-        l_data+=len(data)
-        if not l_data-5<=2**(8*2): 
-            raise Exception("don't send data over 65.578 kB")
-        
-        
+        l_data=len(data)
+        fragment=l_data-5>mtu
+
+        if not fragment:
+            self._send(data,connection=connection,options=options,l_data=l_data)
+        else:
+            data=bytelist(data)
+            while data:
+                d=data.read(mtu-5)
+                if len(d) == mtu-5:
+                    options[2]=True
+                else: options[2]=False
+                l_data=len(d)
+                self._send(d,connection=connection,options=options,l_data=l_data)
+
+    def _send(self,data,connection=None,options=None,l_data=None):
         if options[1] == True:
             options="".join([str(int(options[i])) for i in range(8)]) 
             data = struct.pack('<H',l_data)+struct.pack('<B',int(options,2))+struct.pack('<B',0)+dict_hash+data
@@ -102,7 +109,7 @@ class common:
         data = checksum+data
         connection.sendall(data)        
         return True
-    
+
     def recv(self,connection=None,dh=False,password=None):
         if dh and password is not None: session_key=PBKDF2(password, 0, 32, count=10000, hmac_hash_module=SHA512)
         if connection is None and not dh: connection=self.connection
@@ -119,22 +126,30 @@ class common:
             options=[False]+options
         
         if options[1]: dict_hash=connection.recv(compression.dict_hash_len)
-        data = connection.recv(x)
-        if "session_key" in locals():
-            nonce = connection.recv(self.nonce_len)
-            tag = connection.recv(self.tag_len)
-        else:
-            nonce,tag = b"",b""
+        data = bytelist(connection.recv(x))
+        while options[2]:
+            checksum = connection.recv(1) 
+            l_data = connection.recv(2)
+            _options = connection.recv(1)
+            r2 = connection.recv(1)
+            x=struct.unpack('<H',l_data)[0]
+            options = [bool(int(x)) for x in bin(struct.unpack("<B",_options)[0])[2:]]
+            while len(options)<8:
+                options=[False]+options
+            data+=bytelist(connection.recv(x))
+
+            
         if options[1]:
-            a=l_data+_options+r2+dict_hash+data+nonce+tag
+            a=l_data+_options+r2+dict_hash+bytes(data)
         else:
-            a=l_data+_options+r2+data+nonce+tag
-        if _hash(1,a) != checksum:
-            '''checks for in transport corruption, does not verify data, more for debeugging then anything else'''
-            raise Exception("data corrupted or incopatible settings") 
+            a=l_data+_options+r2+bytes(data)
+        #if _hash(1,a) != checksum:
+        #   '''more for debeugging then anything else'''
+        #    raise Exception("data corrupted or incompatible settings") 
+            
 
         if "session_key" in locals():
-            data = self.decrypt(session_key,data,nonce=nonce,tag=tag)
+            data = self.decrypt(session_key,data)
         
         if not options[0]:
             if options[1]:
@@ -246,10 +261,15 @@ class common:
         cipher = AES.new(session_key, AES.MODE_GCM, mac_len=self.tag_len,nonce=get_random_bytes(self.nonce_len))
         cipher.update(self.header)
         ct, tag = cipher.encrypt_and_digest(data)
-        nonce = cipher.nonce 
+        nonce = cipher.nonce
         return ct+nonce+tag
     
-    def decrypt(self,session_key,data, nonce=None,tag=None):
+    def decrypt(self,session_key,data):
+        data.seek_back(self.nonce_len+self.tag_len)
+        nonce=data.read(self.nonce_len)
+        tag=data.read(self.tag_len)
+        data.truncate(self.nonce_len+self.tag_len)
+        data=bytes(data)
         cipher = AES.new(session_key, AES.MODE_GCM,nonce=nonce, mac_len=self.tag_len)
         cipher.update(self.header) #i have no idea it is
         return cipher.decrypt_and_verify(data,tag)
