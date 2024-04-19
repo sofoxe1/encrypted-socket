@@ -61,7 +61,7 @@ class common:
         self.key_type=key_type
         if self.password is not None: self.header=self.password.encode()
         
-    def send(self,data,dh=False,connection=None,password=None,compress=True,auto_compress=False):
+    def send(self,data,dh=False,connection=None,password=None,compress=True,auto_compress=False,lock=None):
         if dh and password is not None: session_key=PBKDF2(password, 0, 32, count=10000, hmac_hash_module=SHA512)
         if not dh: session_key=self.session_key
         if connection is None and not dh: connection=self.connection
@@ -83,7 +83,7 @@ class common:
 
         l_data=len(data)
         fragment=l_data-5>mtu
-
+        if lock is not None: lock.acquire()
         if not fragment:
             self._send(data,connection=connection,options=options,l_data=l_data,dict_hash=dict_hash)
         else:
@@ -95,7 +95,7 @@ class common:
                 else: options[2]=False
                 l_data=len(d)
                 self._send(d,connection=connection,options=options,l_data=l_data,dict_hash=dict_hash)
-
+        if lock is not None: lock.release()
     def _send(self,data,connection=None,options=None,l_data=None,dict_hash=None):
         if options[1] == True:
             options="".join([str(int(options[i])) for i in range(8)]) 
@@ -136,10 +136,11 @@ class common:
             r2 = connection.recv(1)
             x=struct.unpack('<H',l_data)[0]
             options = [bool(int(x)) for x in bin(struct.unpack("<B",_options)[0])[2:]]
-            if options[1]: dict_hash=connection.recv(compression.dict_hash_len)
-            d=connection.recv(x)
+            
             while len(options)<8:
                 options=[False]+options
+            if options[1]: dict_hash=connection.recv(compression.dict_hash_len)
+            d=connection.recv(x)
             if options[1]:
                 a=l_data+_options+r2+dict_hash+bytes(d)
             else:
@@ -316,8 +317,8 @@ class remote_client(common):
     def close(self):
         self.connection.close()
     
-    def sendall(self, data,compress=True,auto_compress=False):
-        return common.send(self,data,compress=compress,auto_compress=auto_compress)
+    def sendall(self, data,compress=True,auto_compress=False,lock=None):
+        return common.send(self,data,compress=compress,auto_compress=auto_compress,lock=lock)
 
     def recvall(self):
         return common.recv(self)
@@ -393,8 +394,8 @@ class client(common):
         self.address = address
         self.session_key = common.handshake(self,common.eph_priv(self),self.connection,client=(str(ip),port),password=self.password)
     
-    def sendall(self,data,compress=True,auto_compress=False):
-        common.send(self,data,compress=compress,auto_compress=auto_compress)
+    def sendall(self,data,compress=True,auto_compress=False,lock=None):
+        common.send(self,data,compress=compress,auto_compress=auto_compress,lock=lock)
 
     def recvall(self):
         return common.recv(self)

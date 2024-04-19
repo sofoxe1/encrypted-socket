@@ -70,7 +70,7 @@ class P2P:
         self.active_connections=[]
         while True:
             remote=self.server.accept()
-            q=[remote.peer_id,f"{remote.peer_ip()}:{remote.recvall()}",remote]
+            q=[remote.peer_id,f"{remote.peer_ip()}:{remote.recvall()}",remote,threading.Lock()]
             self.active_connections.append(q)
             t=threading.Thread(target=self._handler, args=(remote,))
             t.start()
@@ -80,7 +80,7 @@ class P2P:
     def get_connection(self,peer_id):
         for conn in self.active_connections:
             if conn[0] == peer_id:
-                return conn[2]
+                return conn[3],conn[2]
         try:
             peers_db = sqlite3.connect(self.db)
             peers_t = peers_db.cursor()
@@ -89,7 +89,7 @@ class P2P:
             return self.connect(r)
         except:
             self.remove_peer(peer_id)
-            return False
+            return False,False
     
     def add_peer(self,address):
         if not address in self.list_peers(check=True):
@@ -98,17 +98,20 @@ class P2P:
     def connect(self,address):
         conn = client(address,key=self.key,password=self.password,headless=True,trust=True)
         conn.sendall(self.port)
-        self.active_connections.append([conn.peer_id,address,conn])
+        lock=threading.Lock()
+        self.active_connections.append([conn.peer_id,address,conn,lock])
         self._add_peer(conn.peer_id,address)
         t=threading.Thread(target=self._handler, args=(conn,))
         t.start()
-        return conn
+        return lock,conn
     
     def peer_send(self,peer_id,data,compress=True):
-        conn=self.get_connection(peer_id)
+        lock,conn=self.get_connection(peer_id)
         if conn == False:
             raise P2PException(f"no route to {peer_id}")
-        conn.sendall(data,compress=compress)
+        # lock.acquire()
+        conn.sendall(data,compress=compress,lock=lock)
+        # lock.release()
         return True
 
     def broadcast(self,data):
@@ -142,18 +145,24 @@ class P2P:
                 self.handler(remote.peer_id,msg)
 
 class Sync:
-    def __init__(self,password,chunk_size=(2**16),address=":::5483",db_path="peers.db",key="sync.key"):
+    def __init__(self,password,chunk_size=(2**20),address=":::5483",db_path="peers.db",key="sync.key"):
         self.chunk_size = chunk_size
         self.files=[]
         self.p2p=P2P(password=password,address=address,handler=self.handler,db_path=db_path,key=key)
         self.peer_files={}
         self.buffer={}
+        self.open_files={}
         self.s=0
     
     def read_chunk(self,file_hash,pos):
-        with open(self.get_file_path(file_hash),"rb") as f:
-            f.seek(pos)
-            return f.read(self.chunk_size)
+        try:
+            f=self.open_files[file_hash]
+        except:
+            f=open(self.get_file_path(file_hash),"rb")
+            self.open_files[file_hash]=f
+        
+        f.seek(pos)
+        return f.read(self.chunk_size)
 
     def get_file_path(self,file_hash):
         for f in self.files:
@@ -170,7 +179,10 @@ class Sync:
             case 1:
                 self.p2p.peer_send(peer_id,[0,self.files])
             case 2:
-                self.p2p.peer_send(peer_id,[3,self.read_chunk(data[1],data[2]),data[3]])
+                l=lambda: self.p2p.peer_send(peer_id,[3,self.read_chunk(data[1],data[2]),data[3]])
+                t=threading.Thread(target=l,args=())
+                t.start()
+                
             case 3:
                 self.buffer[data[2]]=data[1]
             case _:
@@ -227,24 +239,40 @@ class Sync:
         if blocking:
             t.join()
 
-    def _downloader(self,f_out,file_hash,peer_id):
-        chunks=self.peer_files[file_hash][3]
-        
-        for i in tqdm(range(0,len(chunks),1)):
-            s=self.s
-            self.s+=1
-            self.p2p.peer_send(peer_id,[2,file_hash,chunks[i],s])
-            for ii in range(100):
+    def _chunk_downloader(self,f_out,file_hash,peer_id,chunks,lock):
+        for c in tqdm(chunks):
+            s=str(file_hash)+str(c)
+            self.p2p.peer_send(peer_id,[2,file_hash,c,s])
+            for ii in range(1000):
                 try:
                     a=self.buffer[s]
+                    lock.acquire()
+                    f_out.seek(c)
                     f_out.write(a)
+                    lock.release()
                     del self.buffer[s]
                     break
                 except KeyError:
-                    time.sleep(0.1)
-            if ii == 99:
+                    time.sleep(0.01)
+                    
+            if ii == 999:
                 raise Exception(f"download of {file_hash} from {peer_id} timed out")
                 break
+
+    def _downloader(self,f_out,file_hash,peer_id,thread_count=6):
+        q=lambda x,s:[[*x[i:i+s]] for i in range(0,len(x),s)]
+        chunks=self.peer_files[file_hash][3]
+        chunks=q(chunks,math.ceil(len(chunks)/thread_count))
+        f_out_lock=threading.Lock()
+        threads=[]
+        for i in range(thread_count):
+            t=threading.Thread(target=self._chunk_downloader,args=(f_out,file_hash,peer_id,chunks[i],f_out_lock))
+            t.start()
+            threads.append(t)
+        for t in threads:
+            t.join()
+        f_out.close()
+        return True
                 
 
     def _get_peer_id(self,file_hash):
@@ -260,6 +288,7 @@ if __name__ == "__main__":
     q=Sync(password="pass123",address=":::5483")
     q.add_file("net.py")
     q.add_file("LICENSE")
+    q.add_file("b.bin")
     q2=Sync(password="pass123",address=":::5484",db_path="peers2.db",key="sync2.key")
     q2.p2p.add_peer(":::5483")
     q3=Sync(password="pass123",address=":::5485",db_path="peers3.db",key="sync3.key")
@@ -269,7 +298,7 @@ if __name__ == "__main__":
     time.sleep(1)
     print(q2.p2p.list_peers(_all=True))
 
-    q3.download("LICENSE","a.bin",blocking=True,overwrite=True)
+    q3.download("b.bin","a.bin",blocking=True,overwrite=True)
 
 
     
