@@ -1,3 +1,4 @@
+from Crypto.Hash import SHAKE256
 class bytelist:
     def __init__(self,data):
         self.data = data
@@ -39,5 +40,12 @@ class bytelist:
         return str(self.data)
 
     def __getitem__(self,item):
-        return self.data[item]        
+        return self.data[item]
+
+def _hash(hash_lenght,*args):
+    shake =SHAKE256.new()
+    for arg in args:
+        shake.update(arg)
+    return shake.read(hash_lenght)
+
 

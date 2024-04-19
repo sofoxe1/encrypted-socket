@@ -4,7 +4,7 @@ import struct
 from Crypto.Cipher import AES
 from Crypto.PublicKey import ECC
 from Crypto.Protocol.KDF import PBKDF2
-from Crypto.Hash import SHAKE256,BLAKE2b,SHA512,SHAKE128
+from Crypto.Hash import SHA512,SHAKE256
 from Crypto.Protocol.DH import key_agreement
 from Crypto.Random import get_random_bytes
 from os.path import exists
@@ -14,8 +14,10 @@ import sys
 import sqlite3
 try:
     import compression
+    from shared import _hash
 except:
     from . import compression
+    from .shared import _hash
 #checksum(1B),l_data(2B),feature level (negotiated during handshake),1B reserved,(data,nonce,tag)
 
 '''
@@ -95,7 +97,7 @@ class common:
             options="".join([str(int(options[i])) for i in range(8)])
             data = struct.pack('<H',l_data)+struct.pack('<B',int(options,2))+struct.pack('<B',0)+data
         
-        checksum=SHAKE128.new(data).read(1)
+        checksum=_hash(1,data)
 
         data = checksum+data
         connection.sendall(data)        
@@ -127,7 +129,7 @@ class common:
             a=l_data+_options+r2+dict_hash+data+nonce+tag
         else:
             a=l_data+_options+r2+data+nonce+tag
-        if SHAKE128.new(a).read(1) != checksum:
+        if _hash(1,a) != checksum:
             '''checks for in transport corruption, does not verify data, more for debeugging then anything else'''
             raise Exception("data corrupted or incopatible settings") 
 
@@ -160,18 +162,14 @@ class common:
             auth=self.recv(connection=connection,dh=True,password=password)
         
         static_pub=ECC.import_key(auth[0])
+        self.peer_id=_hash(128,static_pub.public_key().export_key(format="raw")).hex()
 
-        h_obj = BLAKE2b.new(digest_bits=128)
-        h_obj.update(static_pub.public_key().export_key(format="raw"))
-        self.peer_id=h_obj.hexdigest()
-
-        h_obj = BLAKE2b.new(digest_bits=64)
         if server:
-            h_obj.update(self.key.public_key().export_key(format="raw"))
-            h_obj.update(static_pub.export_key(format="raw"))
+            h_obj = _hash(64,self.key.public_key().export_key(format="raw"),
+            static_pub.export_key(format="raw"))
         else:
-            h_obj.update(static_pub.export_key(format="raw"))
-            h_obj.update(self.key.public_key().export_key(format="raw"))
+            h_obj = _hash(64,static_pub.export_key(format="raw"),
+            self.key.public_key().export_key(format="raw"))
         try:
             
             if not server:
@@ -185,7 +183,7 @@ class common:
                     if res and not self.headless:
                         print(f"known as: {res}")
                     if not self.trust and not self.headless:
-                        input(f"hash is:{h_obj.hexdigest()} continue?")
+                        input(f"hash is:{h_obj.hex()} continue?")
                     elif not self.trust and self.headless:
                         raise Exception(f"key from {client[0]} not trusted")
                     
@@ -196,7 +194,7 @@ class common:
                     known_keys_.close()
                 
             else:
-                if not self.headless: print(f"{client}:{h_obj.hexdigest()}")
+                if not self.headless: print(f"{client}:{h_obj.hex()}")
         except KeyboardInterrupt:
             if not self.headless: print("\nhandshake canceled exiting")
             connection.close()
@@ -204,15 +202,14 @@ class common:
         
             
         eph_pub=ECC.import_key(auth[1])
-        h_obj = BLAKE2b.new(digest_bits=256)
         if server:
-            h_obj.update(eph_priv.public_key().export_key(format="raw"))
-            h_obj.update(eph_pub.public_key().export_key(format="raw"))
+            h_obj = _hash(256,eph_priv.public_key().export_key(format="raw"),
+            eph_pub.public_key().export_key(format="raw"))
         else:
-            h_obj.update(eph_pub.public_key().export_key(format="raw"))
-            h_obj.update(eph_priv.public_key().export_key(format="raw"))
+            h_obj = _hash(256,eph_pub.public_key().export_key(format="raw"),
+            eph_priv.public_key().export_key(format="raw"))
 
-        self.header=h_obj.hexdigest().encode()
+        self.header=h_obj.hex().encode()
 
         return key_agreement(static_priv=self.key,
                             static_pub=static_pub,
@@ -230,7 +227,6 @@ class common:
             raise Exception("you have to specify key path/password or both")
         elif self.key_path is None and self.password is not None:
             self.key=ECC.generate(curve=self.key_type)
-            self.memory_key=True
         elif exists(self.key_path):
             with open(self.key_path,"r") as f:
                 if self.key_type in supported_ecc: 
@@ -243,7 +239,6 @@ class common:
                 if self.key_type in supported_ecc:
                     self.key=ECC.generate(curve=self.key_type)
                 else: raise Exception(f"key format {self.key_type} not supported")
-                print(type(self))
                 f.write(self.key.export_key(format="PEM"))
 
     def encrypt(self,session_key,data):
@@ -266,9 +261,7 @@ class common:
         return self.connection.getpeername()[0]
 
     def id(self):
-        h_obj = BLAKE2b.new(digest_bits=128)
-        h_obj.update(self.key.public_key().export_key(format="raw"))
-        return h_obj.hexdigest()
+        return _hash(128,self.key.public_key().export_key(format="raw")).hex()
 
     def peerid(self):
         return self.peer_id
@@ -297,8 +290,6 @@ class remote_client(common):
 
     def recvall(self):
         return common.recv(self)
-
-
 
 
 class server(common):
@@ -354,7 +345,7 @@ class server(common):
             
                 
 class client(common):
-    def __init__(self,address,key,db_name="known_keys.db",key_type="p256",t_key=False,password=None, headless=True,trust=False,nonce_len=12,tag_len=16):
+    def __init__(self,address,key,db_name="known_keys.db",key_type="p256",password=None, headless=True,trust=False,nonce_len=12,tag_len=16):
         self.password = password
         self.nonce_len=nonce_len
         self.tag_len=tag_len

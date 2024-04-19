@@ -1,5 +1,3 @@
-
-from Crypto.Hash import SHAKE128
 import pickle
 import time
 import inspect
@@ -8,8 +6,10 @@ from os.path import exists
 import numpy as np
 try:
     from .net import client,server
+    from .shared import _hash
 except:
     from net import client,server
+    from shared import _hash
 
 class HT:
 
@@ -24,7 +24,7 @@ class HT:
     def _hash_obj(self,obj:bytes) -> bytes:
         if self.deterministic:
             return round(time.time(),1)
-        return SHAKE128.new(data=obj).read(self.hash_lenght)
+        return _hash(self.hash_lenght,obj)
 
     def _action(self,obj:bytes =None,item=None) -> bool:
         assert self.check(locals())

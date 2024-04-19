@@ -1,5 +1,4 @@
 from os.path import exists,getsize
-from Crypto.Hash import SHAKE128
 from pympler.asizeof import asizeof as getsizeof
 import math
 import time
@@ -9,8 +8,10 @@ import threading
 from tqdm import tqdm
 try:
     from net import client,server
+    from shared import _hash
 except:
     from .net import client,server
+    from .shared import _hash
 
 class P2PException(Exception):
     pass
@@ -180,7 +181,7 @@ class Sync:
             raise Exception("File does not exist: {}".format(file_path))
         f=open(file_path,"rb")
         chunk_count=math.ceil(getsize(file_path)/self.chunk_size)
-        self.files.append([SHAKE128.new(data=f.read(1024)).read(128),file_path,getsize(file_path),[x*self.chunk_size for x in range(chunk_count)]])
+        self.files.append([_hash(128,f.read(1024)),file_path,getsize(file_path),[x*self.chunk_size for x in range(chunk_count)]])
         f.close()
     
     def broadcast(self):
