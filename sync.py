@@ -104,11 +104,11 @@ class P2P:
         t.start()
         return conn
     
-    def peer_send(self,peer_id,data):
+    def peer_send(self,peer_id,data,compress=True):
         conn=self.get_connection(peer_id)
         if conn == False:
             raise P2PException(f"no route to {peer_id}")
-        conn.sendall(data)
+        conn.sendall(data,compress=compress)
         return True
 
     def broadcast(self,data):
@@ -142,7 +142,7 @@ class P2P:
                 self.handler(remote.peer_id,msg)
 
 class Sync:
-    def __init__(self,password,chunk_size=65578-512,address=":::5483",db_path="peers.db",key="sync.key"):
+    def __init__(self,password,chunk_size=(2**16),address=":::5483",db_path="peers.db",key="sync.key"):
         self.chunk_size = chunk_size
         self.files=[]
         self.p2p=P2P(password=password,address=address,handler=self.handler,db_path=db_path,key=key)
@@ -230,19 +230,18 @@ class Sync:
     def _downloader(self,f_out,file_hash,peer_id):
         chunks=self.peer_files[file_hash][3]
         
-        for i in tqdm(chunks):
+        for i in tqdm(range(0,len(chunks),1)):
             s=self.s
             self.s+=1
-            self.p2p.peer_send(peer_id,[2,file_hash,i,s])
+            self.p2p.peer_send(peer_id,[2,file_hash,chunks[i],s])
             for ii in range(100):
-                time.sleep(0.1)
                 try:
                     a=self.buffer[s]
                     f_out.write(a)
                     del self.buffer[s]
                     break
                 except KeyError:
-                    pass
+                    time.sleep(0.1)
             if ii == 99:
                 raise Exception(f"download of {file_hash} from {peer_id} timed out")
                 break
@@ -259,8 +258,8 @@ def rcv():
 
 if __name__ == "__main__":
     q=Sync(password="pass123",address=":::5483")
-    q.add_file("/home/user/amdvbflash_win_5.0.567.zip")
-    q.add_file("/home/user/blender0040-0100.mkv")
+    q.add_file("net.py")
+    q.add_file("LICENSE")
     q2=Sync(password="pass123",address=":::5484",db_path="peers2.db",key="sync2.key")
     q2.p2p.add_peer(":::5483")
     q3=Sync(password="pass123",address=":::5485",db_path="peers3.db",key="sync3.key")
@@ -269,9 +268,8 @@ if __name__ == "__main__":
     q3.request_update()
     time.sleep(1)
     print(q2.p2p.list_peers(_all=True))
-    print(q3.peer_files)
 
-    q3.download("/home/user/amdvbflash_win_5.0.567.zip","a.bin",blocking=True,overwrite=True)
+    q3.download("LICENSE","a.bin",blocking=True,overwrite=True)
 
 
     

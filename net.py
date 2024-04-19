@@ -127,25 +127,35 @@ class common:
         
         if options[1]: dict_hash=connection.recv(compression.dict_hash_len)
         data = bytelist(connection.recv(x))
+        fragment=False
         while options[2]:
+            fragment=True
             checksum = connection.recv(1) 
             l_data = connection.recv(2)
             _options = connection.recv(1)
             r2 = connection.recv(1)
             x=struct.unpack('<H',l_data)[0]
             options = [bool(int(x)) for x in bin(struct.unpack("<B",_options)[0])[2:]]
+            d=connection.recv(x)
             while len(options)<8:
                 options=[False]+options
-            data+=bytelist(connection.recv(x))
+            if options[1]:
+                a=l_data+_options+r2+dict_hash+bytes(d)
+            else:
+                a=l_data+_options+r2+bytes(d)
+            if _hash(1,a) != checksum:
+                '''more for debeugging then anything else'''
+                raise Exception("data corrupted or incompatible settings") 
+            data+=bytelist(d)
 
-            
-        if options[1]:
-            a=l_data+_options+r2+dict_hash+bytes(data)
-        else:
-            a=l_data+_options+r2+bytes(data)
-        #if _hash(1,a) != checksum:
-        #   '''more for debeugging then anything else'''
-        #    raise Exception("data corrupted or incompatible settings") 
+        if not fragment: 
+            if options[1]:
+                a=l_data+_options+r2+dict_hash+bytes(data)
+            else:
+                a=l_data+_options+r2+bytes(data)
+            if _hash(1,a) != checksum:
+                '''more for debeugging then anything else'''
+                raise Exception("data corrupted or incompatible settings") 
             
 
         if "session_key" in locals():
@@ -177,13 +187,13 @@ class common:
             auth=self.recv(connection=connection,dh=True,password=password)
         
         static_pub=ECC.import_key(auth[0])
-        self.peer_id=_hash(128,static_pub.public_key().export_key(format="raw")).hex()
+        self.peer_id=_hash(32,static_pub.public_key().export_key(format="raw")).hex()
 
         if server:
-            h_obj = _hash(64,self.key.public_key().export_key(format="raw"),
+            h_obj = _hash(16,self.key.public_key().export_key(format="raw"),
             static_pub.export_key(format="raw"))
         else:
-            h_obj = _hash(64,static_pub.export_key(format="raw"),
+            h_obj = _hash(16,static_pub.export_key(format="raw"),
             self.key.public_key().export_key(format="raw"))
         try:
             
@@ -281,7 +291,7 @@ class common:
         return self.connection.getpeername()[0]
 
     def id(self):
-        return _hash(128,self.key.public_key().export_key(format="raw")).hex()
+        return _hash(32,self.key.public_key().export_key(format="raw")).hex()
 
     def peerid(self):
         return self.peer_id
