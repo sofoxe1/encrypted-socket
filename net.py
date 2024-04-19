@@ -41,7 +41,7 @@ options bitmask:
 
 
 supported_ecc=["p192","p224","p256","p384","p521","ed25519","ed448"]
-mtu=512
+mtu=1500
 
 def kdf(x):
     return SHAKE256.new(x).read(32)
@@ -65,7 +65,7 @@ class common:
         if dh and password is not None: session_key=PBKDF2(password, 0, 32, count=10000, hmac_hash_module=SHA512)
         if not dh: session_key=self.session_key
         if connection is None and not dh: connection=self.connection
-        
+        dict_hash=None
         options=[False for i in range(8)]
         if compress and auto_compress:
             t = compression.compress(data,auto=True,a=0)
@@ -85,7 +85,7 @@ class common:
         fragment=l_data-5>mtu
 
         if not fragment:
-            self._send(data,connection=connection,options=options,l_data=l_data)
+            self._send(data,connection=connection,options=options,l_data=l_data,dict_hash=dict_hash)
         else:
             data=bytelist(data)
             while data:
@@ -94,9 +94,9 @@ class common:
                     options[2]=True
                 else: options[2]=False
                 l_data=len(d)
-                self._send(d,connection=connection,options=options,l_data=l_data)
+                self._send(d,connection=connection,options=options,l_data=l_data,dict_hash=dict_hash)
 
-    def _send(self,data,connection=None,options=None,l_data=None):
+    def _send(self,data,connection=None,options=None,l_data=None,dict_hash=None):
         if options[1] == True:
             options="".join([str(int(options[i])) for i in range(8)]) 
             data = struct.pack('<H',l_data)+struct.pack('<B',int(options,2))+struct.pack('<B',0)+dict_hash+data
@@ -136,6 +136,7 @@ class common:
             r2 = connection.recv(1)
             x=struct.unpack('<H',l_data)[0]
             options = [bool(int(x)) for x in bin(struct.unpack("<B",_options)[0])[2:]]
+            if options[1]: dict_hash=connection.recv(compression.dict_hash_len)
             d=connection.recv(x)
             while len(options)<8:
                 options=[False]+options
@@ -145,7 +146,7 @@ class common:
                 a=l_data+_options+r2+bytes(d)
             if _hash(1,a) != checksum:
                 '''more for debeugging then anything else'''
-                raise Exception("data corrupted or incompatible settings") 
+                raise Exception("data corrupted or incompatible settings")
             data+=bytelist(d)
 
         if not fragment: 
