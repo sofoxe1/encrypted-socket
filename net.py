@@ -50,13 +50,16 @@ class common:
     
     def __init__(self,key=None,key_type="p256"):
         self.write_key = True
-        if key is None or key == "": #idk why it can be both
+        if type(self).__name__ == "remote_client":
+            pass
+        elif key is None or key == "": #idk why it can be both
             self.key_path = None
             self.write_key = False
         
         else:
             if key.endswith(".key"): key=key[:-4]
             self.key_path=key+"-"+key_type+".key"
+        
 
         self.key_type=key_type
         if self.password is not None: self.header=self.password.encode()
@@ -187,7 +190,6 @@ class common:
                       connection=connection,dh=True,password=password)
                       
             auth=self.recv(connection=connection,dh=True,password=password)
-        
         static_pub=ECC.import_key(auth[0])
         self.peer_id=_hash(32,static_pub.public_key().export_key(format="raw")).hex()
 
@@ -307,9 +309,9 @@ class remote_client(common):
         self.password = password
         self.nonce_len=nonce_len
         self.tag_len=tag_len
+        self.key=key
         super().__init__(key_type=key_type)
         self.headless=headless
-        self.key=key
         self.connection=connection
         self.ip=ip
         self.session_key=common.handshake(self,super().eph_priv(),connection=self.connection,server=True,client=self.ip,password=password)
