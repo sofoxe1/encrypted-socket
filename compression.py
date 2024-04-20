@@ -5,13 +5,12 @@ import pickle
 from sys import getsizeof
 import collections
 import struct
-from Crypto.Hash import SHAKE128
+from Cryptodome.Hash import SHAKE128
 try:
     from shared import bytelist
 except:
     from .shared import bytelist
 
-#well it does stuff, resulting in better compression ratio then simply calling lzma.compress
 dict_hash_len = 2 
 default_words = " ".join(open(f"{os.path.dirname(__file__)}/default_words.txt","r").read().split("\n")).encode()
 dictionaries={SHAKE128.new(data=pickle.dumps(default_words)).read(dict_hash_len):default_words}
@@ -56,7 +55,6 @@ def decode_stuff(q,stuff_data): # magick function that undoes stuff
     return bytes(b+q[match_a:match_a + match_size]+a)
 
 def compress(data,auto=False,a=None,preset=4):
-    # assert auto != bool(a is None 
     if a is not None:
         if type(a) == int:
             a=list(dictionaries.values())[0]
@@ -96,6 +94,4 @@ if __name__ == "__main__":
     b=" ".join(RandomWord().random_words(3))
     assert decompress(compress(b)) == b
     assert decompress(compress(b,a=a),a)==b
-    # print(len(compress(b)))
-    # print(len(compress(b,a=a,auto=False)))
 

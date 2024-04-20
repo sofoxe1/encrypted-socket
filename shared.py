@@ -1,4 +1,4 @@
-from Crypto.Hash import SHAKE256
+from Cryptodome.Hash import SHAKE256
 class bytelist:
     def __init__(self,data):
         self.data = data

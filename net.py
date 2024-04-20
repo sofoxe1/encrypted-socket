@@ -1,12 +1,12 @@
 import socket
 import sys
 import struct
-from Crypto.Cipher import AES
-from Crypto.PublicKey import ECC
-from Crypto.Protocol.KDF import PBKDF2
-from Crypto.Hash import SHA512,SHAKE256
-from Crypto.Protocol.DH import key_agreement
-from Crypto.Random import get_random_bytes
+from Cryptodome.Cipher import AES
+from Cryptodome.PublicKey import ECC
+from Cryptodome.Protocol.KDF import PBKDF2
+from Cryptodome.Hash import SHA512,SHAKE256
+from Cryptodome.Protocol.DH import key_agreement
+from Cryptodome.Random import get_random_bytes
 from os.path import exists
 import threading
 import time
@@ -285,7 +285,7 @@ class common:
         data.truncate(self.nonce_len+self.tag_len)
         data=bytes(data)
         cipher = AES.new(session_key, AES.MODE_GCM,nonce=nonce, mac_len=self.tag_len)
-        cipher.update(self.header) #i have no idea it is
+        cipher.update(self.header) #i have no idea that is
         return cipher.decrypt_and_verify(data,tag)
     
     def peername(self):
