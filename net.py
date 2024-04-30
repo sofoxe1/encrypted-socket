@@ -41,7 +41,7 @@ options bitmask:
 
 
 supported_ecc=["p192","p224","p256","p384","p521","ed25519","ed448"]
-mtu=1500
+mtu=1500-68 #not sure where 68 is comming from but it works
 
 def kdf(x):
     return SHAKE256.new(x).read(32)
