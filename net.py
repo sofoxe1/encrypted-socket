@@ -354,7 +354,10 @@ class server(common):
 
     def accept_con(self):
         while True:
-            connection,client=self.socket.accept()
+            try:
+                connection,client=self.socket.accept()
+            except OSError:
+                break
             thread = threading.Thread(target=self.handler,args=(connection,client,))
             thread.start()
             self.threads.append(thread)
@@ -415,8 +418,10 @@ class client(common):
 if __name__ == "__main__":
     port=6021
     s=server(f":::{port}",key="",password="123",headless=True,nonce_len=8,tag_len=10)
-    c=client(f"127.0.0.1:{port}",key="",password="123",headless=True,nonce_len=8,tag_len=10,trust=True) 
-    time.sleep(1)
+    c=client(f"127.0.0.1:{port}",key="",password="123",headless=False,nonce_len=8,tag_len=10,trust=True)
+    s.close()
+    s=server(f":::{port}",key="",password="123",headless=True,nonce_len=8,tag_len=10)
+    c.reconnect()
     c.sendall("""I then thought that my father would be unjust if he ascribed my neglect
 to vice or faultiness on my part, but I am now convinced that he was
 justified in conceiving that I should not be altogether free from
