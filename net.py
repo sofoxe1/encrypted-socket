@@ -383,6 +383,8 @@ class server(common):
                 
 class client(common):
     def __init__(self,address,key,db_name="known_keys.db",key_type="p256",password=None, headless=True,trust=False,nonce_len=12,tag_len=16):
+        self.nkey=key
+        self.key_type=key_type
         self.password = password
         self.nonce_len=nonce_len
         self.tag_len=tag_len
@@ -410,7 +412,7 @@ class client(common):
     
     def reconnect(self):
         self.close()
-        self.connect(self.address)
+        self.__init__(self.address,self.nkey,self.known_keys,self.key_type,self.password,self.headless,self.trust,self.nonce_len,self.tag_len)
     
     
 
@@ -437,5 +439,5 @@ whatsoever to interfere with the tranquillity of his domestic
 affections, Greece had not been enslaved, Cæsar would have spared his
 country, America would have been discovered more gradually, and the
 empires of Mexico and Peru had not been destroyed.""")
-    
+
     print(s.accept().recvall())
